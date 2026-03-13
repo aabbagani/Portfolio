@@ -17,15 +17,18 @@ import {
     GraduationCap,
     Award,
     GripVertical,
-    AlertCircle
+    AlertCircle,
+    Lock,
+    LogIn,
+    LogOut
 } from 'lucide-react';
 import { motion, AnimatePresence, Reorder } from 'motion/react';
 
-const API_URL = 'http://localhost:3001/api';
+const API_URL = '/api';
 
 // --- Shared Components ---
 
-function ImageUpload({ label, value, onChange }: { label: string, value: string, onChange: (v: string) => void }) {
+function ImageUpload({ label, value, onChange, token }: { label: string, value: string, onChange: (v: string) => void, token: string | null }) {
     const [uploading, setUploading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
@@ -40,9 +43,12 @@ function ImageUpload({ label, value, onChange }: { label: string, value: string,
         formData.append('file', file);
 
         try {
-            console.log('Uploading to:', 'http://localhost:3001/api/upload');
-            const res = await fetch('http://localhost:3001/api/upload', {
+            console.log('Uploading to:', `${API_URL}/upload`);
+            const res = await fetch(`${API_URL}/upload`, {
                 method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${token}`
+                },
                 body: formData,
             });
 
@@ -112,6 +118,9 @@ function ImageUpload({ label, value, onChange }: { label: string, value: string,
 }
 
 export default function Admin() {
+    const [token, setToken] = useState<string | null>(localStorage.getItem('admin_token'));
+    const [loginForm, setLoginForm] = useState({ username: '', password: '' });
+    const [loginError, setLoginError] = useState<string | null>(null);
     const [activeTab, setActiveTab] = useState<'projects' | 'experience' | 'skills' | 'content' | 'education'>('projects');
     const [data, setData] = useState<any>({
         projects: [],
@@ -126,20 +135,53 @@ export default function Admin() {
     const [deleteModal, setDeleteModal] = useState<{ type: string, id: number, title: string } | null>(null);
 
     useEffect(() => {
-        fetchData();
-    }, []);
+        if (token) {
+            fetchData();
+        }
+    }, [token]);
+
+    const handleLogin = async (e: React.FormEvent) => {
+        e.preventDefault();
+        setLoginError(null);
+        try {
+            const res = await fetch(`${API_URL}/login`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(loginForm)
+            });
+            if (res.ok) {
+                const { token: receivedToken } = await res.json();
+                setToken(receivedToken);
+                localStorage.setItem('admin_token', receivedToken);
+            } else {
+                setLoginError('Invalid username or password');
+            }
+        } catch (error) {
+            setLoginError('Server error. Please try again later.');
+        }
+    };
+
+    const handleLogout = () => {
+        setToken(null);
+        localStorage.removeItem('admin_token');
+    };
 
     const fetchData = async () => {
         setLoading(true);
         try {
             const [projRes, expRes, skillRes, contentRes, eduRes, certRes] = await Promise.all([
-                fetch(`${API_URL}/projects`),
-                fetch(`${API_URL}/experiences`),
-                fetch(`${API_URL}/skills`),
-                fetch(`${API_URL}/content`),
-                fetch(`${API_URL}/education`),
-                fetch(`${API_URL}/certifications`)
+                fetch(`${API_URL}/projects`, { headers: { 'Authorization': `Bearer ${token}` } }),
+                fetch(`${API_URL}/experiences`, { headers: { 'Authorization': `Bearer ${token}` } }),
+                fetch(`${API_URL}/skills`, { headers: { 'Authorization': `Bearer ${token}` } }),
+                fetch(`${API_URL}/content`, { headers: { 'Authorization': `Bearer ${token}` } }),
+                fetch(`${API_URL}/education`, { headers: { 'Authorization': `Bearer ${token}` } }),
+                fetch(`${API_URL}/certifications`, { headers: { 'Authorization': `Bearer ${token}` } })
             ]);
+
+            if (projRes.status === 401 || projRes.status === 403) {
+                handleLogout();
+                return;
+            }
 
             setData({
                 projects: await projRes.json(),
@@ -166,7 +208,10 @@ export default function Admin() {
         try {
             const res = await fetch(`${API_URL}/${type}`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                },
                 body: JSON.stringify(payload)
             });
             if (res.ok) {
@@ -183,7 +228,10 @@ export default function Admin() {
             const endpoint = type === 'content' ? type : `${type}/${id}`;
             const res = await fetch(`${API_URL}/${endpoint}`, {
                 method: type === 'content' ? 'POST' : 'PUT',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                },
                 body: JSON.stringify(payload)
             });
             if (res.ok) {
@@ -199,7 +247,10 @@ export default function Admin() {
         if (!deleteModal) return;
         const { type, id } = deleteModal;
         try {
-            const res = await fetch(`${API_URL}/${type}/${id}`, { method: 'DELETE' });
+            const res = await fetch(`${API_URL}/${type}/${id}`, {
+                method: 'DELETE',
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
             if (res.ok) {
                 showMessage('Deleted successfully', 'success');
                 fetchData();
@@ -217,7 +268,10 @@ export default function Admin() {
         try {
             const res = await fetch(`${API_URL}/${type}/reorder`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                },
                 body: JSON.stringify({ orders })
             });
             if (res.ok) {
@@ -229,6 +283,70 @@ export default function Admin() {
         }
     };
 
+    if (!token) {
+        return (
+            <div className="min-h-screen bg-background flex items-center justify-center p-6">
+                <motion.div
+                    initial={{ opacity: 0, scale: 0.95 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    className="w-full max-w-md bg-surface border border-white/5 p-12 rounded-[40px] shadow-2xl relative overflow-hidden group"
+                >
+                    <div className="absolute inset-0 bg-gradient-to-br from-primary/5 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-1000" />
+                    <div className="relative z-10">
+                        <div className="w-16 h-16 bg-primary/10 rounded-2xl flex items-center justify-center text-primary mx-auto mb-8 border border-white/5">
+                            <Lock size={32} />
+                        </div>
+                        <h2 className="text-3xl font-black text-center tracking-tighter mb-2">RESTRICTED SPACE</h2>
+                        <p className="text-slate-500 text-[10px] font-black uppercase text-center tracking-[0.3em] mb-10">Identity verification required</p>
+
+                        <form onSubmit={handleLogin} className="space-y-6">
+                            <div className="space-y-2">
+                                <label className="text-[10px] font-black uppercase text-slate-500 tracking-[0.2em] ml-1">Terminal ID</label>
+                                <input
+                                    type="text"
+                                    required
+                                    className="w-full bg-background/50 border border-white/10 rounded-2xl px-6 py-4 text-sm font-medium focus:border-primary focus:bg-background outline-none transition-all placeholder:text-slate-800"
+                                    placeholder="Username"
+                                    value={loginForm.username}
+                                    onChange={(e) => setLoginForm({ ...loginForm, username: e.target.value })}
+                                />
+                            </div>
+                            <div className="space-y-2">
+                                <label className="text-[10px] font-black uppercase text-slate-500 tracking-[0.2em] ml-1">Access Token</label>
+                                <input
+                                    type="password"
+                                    required
+                                    className="w-full bg-background/50 border border-white/10 rounded-2xl px-6 py-4 text-sm font-medium focus:border-primary focus:bg-background outline-none transition-all placeholder:text-slate-800"
+                                    placeholder="••••••••••••"
+                                    value={loginForm.password}
+                                    onChange={(e) => setLoginForm({ ...loginForm, password: e.target.value })}
+                                />
+                            </div>
+
+                            {loginError && (
+                                <motion.div
+                                    initial={{ opacity: 0, y: 10 }}
+                                    animate={{ opacity: 1, y: 0 }}
+                                    className="p-4 bg-red-500/10 border border-red-500/20 rounded-2xl flex items-center gap-3 text-red-500 text-[10px] font-black uppercase"
+                                >
+                                    <AlertCircle size={14} />
+                                    {loginError}
+                                </motion.div>
+                            )}
+
+                            <button
+                                type="submit"
+                                className="w-full bg-primary py-5 rounded-[24px] font-black uppercase text-[12px] tracking-[0.3em] shadow-xl shadow-primary/20 transition-all hover:scale-[1.02] active:scale-[0.98] flex items-center justify-center gap-3"
+                            >
+                                <LogIn size={18} />
+                                Enter Dashboard
+                            </button>
+                        </form>
+                    </div>
+                </motion.div>
+            </div>
+        );
+    }
 
     if (loading) return (
         <div className="min-h-screen bg-background flex items-center justify-center">
@@ -257,7 +375,12 @@ export default function Admin() {
                         <h1 className="text-4xl font-black tracking-tighter">PORTFOLIO <span className="text-primary">ADMIN</span></h1>
                         <p className="text-slate-500 text-xs font-black uppercase tracking-[0.3em] mt-2">v2.2 Advanced Content Suite</p>
                     </div>
-                    <button onClick={() => window.location.href = '/'} className="px-6 py-3 border border-border rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-white/5 transition-colors">Terminal View</button>
+                    <div className="flex gap-4">
+                        <button onClick={() => window.location.href = '/'} className="px-6 py-3 border border-border rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-white/5 transition-colors">Terminal View</button>
+                        <button onClick={handleLogout} className="px-6 py-3 bg-red-500/10 text-red-500 border border-red-500/20 rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-red-500 hover:text-white transition-all flex items-center gap-2">
+                            <LogOut size={14} /> Exit
+                        </button>
+                    </div>
                 </header>
 
                 <div className="grid lg:grid-cols-12 gap-12">
@@ -288,6 +411,7 @@ export default function Admin() {
                                 onUpdate={(id: any, p: any) => handleUpdate('projects', id, p)}
                                 onDelete={(id: number) => setDeleteModal({ type: 'projects', id, title: data.projects.find((p: any) => p.id === id)?.title || 'Artifact' })}
                                 onReorder={(orders: any) => handleReorder('projects', orders)}
+                                token={token}
                             />
                         )}
                         {activeTab === 'experience' && (
@@ -297,6 +421,7 @@ export default function Admin() {
                                 onUpdate={(id: any, e: any) => handleUpdate('experiences', id, e)}
                                 onDelete={(id: number) => setDeleteModal({ type: 'experiences', id, title: data.experiences.find((e: any) => e.id === id)?.role || 'Experience' })}
                                 onReorder={(orders: any) => handleReorder('experiences', orders)}
+                                token={token}
                             />
                         )}
                         {activeTab === 'skills' && (
@@ -304,6 +429,7 @@ export default function Admin() {
                                 data={data.skills}
                                 onCreate={(s: any) => handleCreate('skills', s)}
                                 onDelete={(id: number) => setDeleteModal({ type: 'skills', id, title: data.skills.find((s: any) => s.id === id)?.name || 'Capability' })}
+                                token={token}
                             />
                         )}
                         {activeTab === 'education' && (
@@ -316,12 +442,14 @@ export default function Admin() {
                                 onCertCreate={(c: any) => handleCreate('certifications', c)}
                                 onCertUpdate={(id: any, c: any) => handleUpdate('certifications', id, c)}
                                 onCertDelete={(id: number) => setDeleteModal({ type: 'certifications', id, title: data.certifications.find((c: any) => c.id === id)?.name || 'Certification' })}
+                                token={token}
                             />
                         )}
                         {activeTab === 'content' && (
                             <ContentManager
                                 data={data.content}
                                 onSave={(key: string, value: string) => handleCreate('content', { key, value })}
+                                token={token}
                             />
                         )}
                     </main>
@@ -407,7 +535,7 @@ const smartReorder = (data: any[], targetId: number, newOrder: number) => {
     });
 };
 
-function ProjectManager({ data, onCreate, onUpdate, onDelete, onReorder }: any) {
+function ProjectManager({ data, onCreate, onUpdate, onDelete, onReorder, token }: any) {
     const [editItem, setEditItem] = useState<any>(null);
     const empty = { title: '', category: '', description: '', image: '', tags: [], link: '', media: [], sortOrder: 0 };
 
@@ -483,7 +611,7 @@ function ProjectManager({ data, onCreate, onUpdate, onDelete, onReorder }: any) 
                         </div>
                         <TextArea label="Narrative Description" value={editItem.description} onChange={(v) => setEditItem({ ...editItem, description: v })} />
 
-                        <ImageUpload label="Primary Display Image" value={editItem.image} onChange={(v) => setEditItem({ ...editItem, image: v })} />
+                        <ImageUpload label="Primary Display Image" value={editItem.image} onChange={(v) => setEditItem({ ...editItem, image: v })} token={token} />
 
                         <div className="grid grid-cols-2 gap-4">
                             <Input label="Primary CTA Label" value={editItem.link} onChange={(v) => setEditItem({ ...editItem, link: v })} />
@@ -566,7 +694,7 @@ function ProjectManager({ data, onCreate, onUpdate, onDelete, onReorder }: any) 
     );
 }
 
-function ExperienceManager({ data, onCreate, onUpdate, onDelete, onReorder }: any) {
+function ExperienceManager({ data, onCreate, onUpdate, onDelete, onReorder, token }: any) {
     const [editItem, setEditItem] = useState<any>(null);
     const [tagsString, setTagsString] = useState('');
     const empty = { role: '', company: '', period: '', location: '', summary: '', wins: [], tags: [], behindTheResume: '', showImage: 1, image: '', imageCaption: '', sortOrder: 0 };
@@ -657,7 +785,7 @@ function ExperienceManager({ data, onCreate, onUpdate, onDelete, onReorder }: an
                         </div>
 
                         <div className="pt-4 border-t border-border space-y-6">
-                            <ImageUpload label="Milestone Photo" value={editItem.image} onChange={(v) => setEditItem({ ...editItem, image: v })} />
+                            <ImageUpload label="Milestone Photo" value={editItem.image} onChange={(v) => setEditItem({ ...editItem, image: v })} token={token} />
                             <div className="grid grid-cols-2 gap-6">
                                 <Input label="Image Caption" value={editItem.imageCaption} onChange={(v) => setEditItem({ ...editItem, imageCaption: v })} />
                                 <div className="flex items-center gap-4">
@@ -693,7 +821,7 @@ function ExperienceManager({ data, onCreate, onUpdate, onDelete, onReorder }: an
     );
 }
 
-function SkillManager({ data, onCreate, onDelete }: any) {
+function SkillManager({ data, onCreate, onDelete, token }: any) {
     const [newName, setNewName] = useState('');
     const [newType, setNewType] = useState<'technical' | 'soft'>('technical');
 
@@ -758,7 +886,7 @@ function SkillManager({ data, onCreate, onDelete }: any) {
     );
 }
 
-function EducationCertManager({ education, certifications, onEduCreate, onEduUpdate, onEduDelete, onCertCreate, onCertUpdate, onCertDelete }: any) {
+function EducationCertManager({ education, certifications, onEduCreate, onEduUpdate, onEduDelete, onCertCreate, onCertUpdate, onCertDelete, token }: any) {
     const [editEdu, setEditEdu] = useState<any>(null);
     const [editCert, setEditCert] = useState<any>(null);
     const [newCert, setNewCert] = useState({ name: '', issuer: '', date: '', link: '', image: '', showImage: 1 });
@@ -813,7 +941,7 @@ function EducationCertManager({ education, certifications, onEduCreate, onEduUpd
                     </div>
                     <div className="grid grid-cols-2 gap-6 items-end">
                         <div className="flex-1">
-                            <ImageUpload label="Certification Logo / Photo" value={newCert.image} onChange={v => setNewCert({ ...newCert, image: v })} />
+                            <ImageUpload label="Certification Logo / Photo" value={newCert.image} onChange={v => setNewCert({ ...newCert, image: v })} token={token} />
                         </div>
                         <div className="flex flex-col gap-4">
                             <div className="flex items-center gap-4 py-2 border-t border-border">
@@ -865,7 +993,7 @@ function EducationCertManager({ education, certifications, onEduCreate, onEduUpd
                             <Input label="GPA" value={editEdu.gpa} onChange={v => setEditEdu({ ...editEdu, gpa: v })} />
                         </div>
                         <Input label="Academic Achievements" value={editEdu.details} onChange={v => setEditEdu({ ...editEdu, details: v })} />
-                        <ImageUpload label="Institution Logo / Photo" value={editEdu.image} onChange={v => setEditEdu({ ...editEdu, image: v })} />
+                        <ImageUpload label="Institution Logo / Photo" value={editEdu.image} onChange={v => setEditEdu({ ...editEdu, image: v })} token={token} />
                         <div className="flex items-center gap-4 py-2 border-t border-border mt-4">
                             <label className="text-[10px] font-black uppercase text-slate-500 tracking-widest">Show Institution Photo</label>
                             <button
@@ -893,7 +1021,7 @@ function EducationCertManager({ education, certifications, onEduCreate, onEduUpd
                                 <Input label="Date Acquired" value={editCert.date} onChange={v => setEditCert({ ...editCert, date: v })} />
                                 <Input label="URL" value={editCert.link} onChange={v => setEditCert({ ...editCert, link: v })} />
                             </div>
-                            <ImageUpload label="Certification Logo / Photo" value={editCert.image} onChange={v => setEditCert({ ...editCert, image: v })} />
+                            <ImageUpload label="Certification Logo / Photo" value={editCert.image} onChange={v => setEditCert({ ...editCert, image: v })} token={token} />
                             <div className="flex items-center gap-4 py-2 border-t border-border mt-4">
                                 <label className="text-[10px] font-black uppercase text-slate-500 tracking-widest">Show Cert Photo</label>
                                 <button
@@ -912,7 +1040,7 @@ function EducationCertManager({ education, certifications, onEduCreate, onEduUpd
     );
 }
 
-function ContentManager({ data, onSave }: any) {
+function ContentManager({ data, onSave, token }: any) {
     const keys = [
         { key: 'hero_title_1', label: 'Hero Title Line 1' },
         { key: 'hero_title_2', label: 'Hero Title Line 2' },
@@ -933,7 +1061,7 @@ function ContentManager({ data, onSave }: any) {
                             <span className="text-[8px] font-mono text-slate-700 bg-white/5 px-2 py-1 rounded">{item.key}</span>
                         </div>
                         {item.isPhoto ? (
-                            <ImageUpload label="" value={data[item.key] || ''} onChange={(v) => onSave(item.key, v)} />
+                            <ImageUpload label="" value={data[item.key] || ''} onChange={(v) => onSave(item.key, v)} token={token} />
                         ) : (
                             <div className="relative group">
                                 <textarea
